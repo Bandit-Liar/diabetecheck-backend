@@ -1,124 +1,64 @@
-# DiabeteCheck — Backend API
+# DiabeteCheck — Backend API v2
 
 Backend RESTful API untuk sistem deteksi dini risiko diabetes berbasis AI.
-Dibangun dengan **Node.js + Express.js**, mengintegrasikan model Machine Learning
-Python (TensorFlow/Keras) via child process.
+Dibangun dengan **Node.js + Express.js**, menggunakan dataset **CDC Diabetes Health Indicators (21 fitur)**.
 
 ---
 
 ## Prasyarat
 
-Pastikan sudah terinstall di komputer kamu:
-
-| Tools | Versi Minimum | Cek dengan |
-|---|---|---|
-| Node.js | v18+ | `node -v` |
-| npm | v8+ | `npm -v` |
-| Python | v3.8+ | `python --version` atau `python3 --version` |
+| Tools  | Versi Minimum | Cek dengan |
+|--------|---------------|------------|
+| Node.js | v18+         | `node -v` |
+| npm    | v8+           | `npm -v`  |
+| Python | v3.8+         | `python --version` atau `python3 --version` |
 
 ---
 
 ## Instalasi
 
-### 1. Clone / salin folder backend
-
-```
-diabetecheck/
-└── backend/   ← kamu ada di sini
-```
-
-### 2. Install dependencies Node.js
+### 1. Install dependencies Node.js
 
 ```bash
 cd backend
 npm install
 ```
 
-### 3. Buat file environment
+### 2. Buat file environment
 
 ```bash
 cp .env.example .env
 ```
 
-Lalu buka `.env` dan sesuaikan:
+Sesuaikan isi `.env`:
 
 ```env
 PORT=5000
 NODE_ENV=development
 FRONTEND_URL=http://localhost:5173
 
-# Sesuaikan dengan Python di komputer kamu:
-# Windows  → python
-# Mac/Linux → python3
+# Windows  → PYTHON_PATH=python
+# Mac/Linux → PYTHON_PATH=python3
 PYTHON_PATH=python3
 
 MODEL_PATH=./model/diabetecheck_model.keras
+SCALER_PATH=./model/scaler.pkl
 ```
 
-> **Windows:** Jika muncul error `Python tidak ditemukan`, ganti `PYTHON_PATH=python`
-
----
-
-## Meletakkan File Model dari Tim AI Engineer
-
-Setelah tim AI Engineer selesai melatih model, minta file **`diabetecheck_model.keras`**
-lalu letakkan di folder `model/`:
-
-```
-backend/
-└── model/
-    ├── inference.py                  ← sudah ada
-    └── diabetecheck_model.keras      ← taruh di sini ✅
-```
-
-### Aktifkan inferensi model asli
-
-Buka `model/inference.py`, lalu di fungsi `main()` ganti baris ini:
-
-```python
-# SEBELUM (mock)
-probability = mock_predict(input_data)
-
-# SESUDAH (model asli)
-probability = production_predict(input_data)
-```
-
-Kemudian uncomment bagian import di atas file:
-
-```python
-import numpy as np
-import tensorflow as tf
-import os
-```
-
-Dan uncomment isi fungsi `production_predict()`.
-
-> **Catatan:** Pastikan library Python sudah terinstall:
-> ```bash
-> pip install tensorflow numpy
-> ```
-
----
-
-## Menjalankan Server
-
-### Mode development (auto-restart saat file berubah)
+### 3. Jalankan server
 
 ```bash
+# Development (auto-restart)
 npm run dev
-```
 
-### Mode production
-
-```bash
+# Production
 npm start
 ```
 
-Jika berhasil, terminal menampilkan:
-
+Output saat berhasil:
 ```
 ─────────────────────────────────────────
-  DiabeteCheck Backend berjalan
+  DiabeteCheck Backend v2 berjalan
   Local  : http://localhost:5000
   Health : http://localhost:5000/api/health
   Mode   : development
@@ -127,169 +67,266 @@ Jika berhasil, terminal menampilkan:
 
 ---
 
+## Meletakkan File Model dari Garrand (AI Engineer)
+
+Setelah Garrand selesai melatih model, minta dua file berikut:
+
+| File | Deskripsi |
+|------|-----------|
+| `diabetecheck_model.keras` | Model neural network hasil training |
+| `scaler.pkl` | Scaler yang dipakai saat training (wajib sama) |
+
+Letakkan keduanya di folder `model/`:
+
+```
+backend/
+└── model/
+    ├── inference.py                  ← sudah ada
+    ├── diabetecheck_model.keras      ← taruh di sini ✅
+    └── scaler.pkl                    ← taruh di sini ✅
+```
+
+> **Penting:** Kedua file ini tidak akan ter-commit ke GitHub karena sudah
+> ada di `.gitignore`. Bagikan via Google Drive, WeTransfer, atau channel tim.
+
+### Aktifkan model asli
+
+**Langkah 1** — Install dependency Python:
+```bash
+pip install tensorflow numpy joblib
+```
+
+**Langkah 2** — Buka `model/inference.py`, di fungsi `main()` ganti:
+```python
+# SEBELUM (mock)
+result = mock_predict(input_data)
+
+# SESUDAH (model asli)
+result = production_predict(input_data)
+```
+
+**Langkah 3** — Konfirmasi urutan `FEATURE_ORDER` di `inference.py` ke Garrand.
+Urutan 21 fitur **harus persis sama** dengan saat model dilatih.
+
+---
+
 ## Struktur Folder
 
 ```
 backend/
 ├── model/
-│   ├── diabetecheck_model.keras   ← dari tim AI Engineer (tidak di-commit)
+│   ├── diabetecheck_model.keras   ← dari Garrand (tidak di-commit)
+│   ├── scaler.pkl                 ← dari Garrand (tidak di-commit)
 │   └── inference.py               ← script inferensi Python
 ├── src/
 │   ├── routes/
 │   │   ├── predict.js             ← POST /api/predict
-│   │   └── history.js             ← GET  /api/history
+│   │   └── history.js             ← GET + DELETE /api/history
 │   ├── middleware/
-│   │   ├── validateInput.js       ← validasi & sanitasi 8 field input
+│   │   ├── validateInput.js       ← validasi 21 field CDC
 │   │   └── errorHandler.js        ← global error handler
 │   ├── services/
-│   │   └── predictionService.js   ← logic inferensi + determineResult()
+│   │   └── predictionService.js   ← inference + determineResult()
 │   └── utils/
-│       └── logger.js              ← logger request ke console
+│       └── logger.js              ← logger request
 ├── .env                           ← tidak di-commit
-├── .env.example                   ← template environment variables
+├── .env.example
 ├── .gitignore
 ├── package.json
-├── server.js                      ← entry point Express
+├── server.js
 └── README.md
 ```
 
 ---
 
-## Endpoints API
+## API Endpoints
 
-### `GET /api/health`
-Cek apakah server berjalan.
+### GET `/api/health`
+Cek status server.
 
-### `POST /api/predict`
-Jalankan prediksi risiko diabetes.
-
-**Request Body:**
+**Response 200:**
 ```json
 {
-  "pregnancies": 2,
-  "glucose": 130,
-  "blood_pressure": 80,
-  "skin_thickness": 25,
-  "insulin": 100,
-  "bmi": 28.5,
-  "diabetes_pedigree_function": 0.5,
-  "age": 35
+  "status": "ok",
+  "message": "DiabeteCheck API is running",
+  "timestamp": "2026-05-17T10:00:00.000Z"
 }
 ```
 
-**Validasi range field:**
+---
 
-| Field | Min | Max |
-|---|---|---|
-| pregnancies | 0 | 17 |
-| glucose | 0 | 200 |
-| blood_pressure | 0 | 122 |
-| skin_thickness | 0 | 99 |
-| insulin | 0 | 846 |
-| bmi | 0 | 67.1 |
-| diabetes_pedigree_function | 0.078 | 2.42 |
-| age | 21 | 81 |
+### POST `/api/predict`
+Prediksi risiko diabetes berdasarkan 21 fitur CDC.
 
-**Response sukses `200`:**
+**Request Body (21 field wajib):**
+```json
+{
+  "HighBP": 1,
+  "HighChol": 0,
+  "CholCheck": 1,
+  "BMI": 28,
+  "Smoker": 0,
+  "Stroke": 0,
+  "HeartDiseaseorAttack": 0,
+  "PhysActivity": 1,
+  "Fruits": 1,
+  "Veggies": 1,
+  "HvyAlcoholConsump": 0,
+  "AnyHealthcare": 1,
+  "NoDocbcCost": 0,
+  "GenHlth": 3,
+  "MentHlth": 5,
+  "PhysHlth": 2,
+  "DiffWalk": 0,
+  "Sex": 1,
+  "Age": 7,
+  "Education": 5,
+  "Income": 6
+}
+```
+
+**Validasi 21 field:**
+
+| Tipe | Field | Nilai Valid |
+|------|-------|-------------|
+| Biner | HighBP, HighChol, CholCheck, Smoker, Stroke, HeartDiseaseorAttack, PhysActivity, Fruits, Veggies, HvyAlcoholConsump, AnyHealthcare, NoDocbcCost, DiffWalk, Sex | 0 atau 1 |
+| Numerik | BMI | 12 – 98 |
+| Numerik | MentHlth, PhysHlth | 0 – 30 |
+| Skala | GenHlth | 1 – 5 |
+| Skala | Age | 1 – 13 |
+| Skala | Education | 1 – 6 |
+| Skala | Income | 1 – 8 |
+
+**Response sukses 200:**
 ```json
 {
   "success": true,
   "data": {
     "id": 1,
-    "probability": 0.6243,
-    "percentage": "62.4%",
-    "level": "medium",
-    "label": "Risiko Sedang",
-    "color": "yellow",
-    "suggestion": "Disarankan untuk memeriksakan diri ke dokter...",
-    "predictedAt": "2026-05-14T10:00:00.000Z"
+    "prediction": "Berisiko",
+    "probability": 0.6781,
+    "risk_level": "Sedang",
+    "input_received": { "...21 field..." },
+    "timestamp": "2026-05-17T10:00:00.000Z"
   }
 }
 ```
 
-**Response error validasi `400`:**
+**Logic hasil:**
+- `prediction`: `>= 0.50` → `"Berisiko"` | `< 0.50` → `"Tidak Berisiko"`
+- `risk_level`: `>= 0.70` → `"Tinggi"` | `>= 0.40` → `"Sedang"` | `< 0.40` → `"Rendah"`
+
+**Response error validasi 400:**
 ```json
 {
   "success": false,
-  "message": "Input tidak valid. Periksa kembali data yang dikirim.",
-  "errors": [
-    { "field": "glucose", "message": "Glucose harus berada di antara 0 dan 200 (diterima: 999)" }
+  "error": "Validation error",
+  "details": [
+    "Field HighBP harus bernilai 0 atau 1 (diterima: 5)",
+    "Field BMI harus berada di antara 12 dan 98 (diterima: 999)"
   ]
 }
 ```
 
-### `GET /api/history`
+---
+
+### GET `/api/history`
 Ambil semua riwayat prediksi (terbaru di atas).
 
-### `DELETE /api/history`
-Hapus semua riwayat (berguna saat development).
+**Response 200:**
+```json
+{
+  "success": true,
+  "count": 3,
+  "data": [ { "...hasil prediksi..." } ]
+}
+```
 
 ---
 
-## Test dengan curl
+### DELETE `/api/history`
+Hapus semua riwayat prediksi dari memory.
 
-### Health check
-```bash
-curl http://localhost:5000/api/health
+**Response 200:**
+```json
+{
+  "success": true,
+  "message": "History cleared"
+}
 ```
 
-### Prediksi — data valid
-```bash
-curl -X POST http://localhost:5000/api/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "pregnancies": 2,
-    "glucose": 130,
-    "blood_pressure": 80,
-    "skin_thickness": 25,
-    "insulin": 100,
-    "bmi": 28.5,
-    "diabetes_pedigree_function": 0.5,
-    "age": 35
-  }'
-```
+---
 
-### Prediksi — validasi gagal (field hilang + out of range)
-```bash
-curl -X POST http://localhost:5000/api/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "pregnancies": 2,
-    "glucose": 999,
-    "blood_pressure": 80,
-    "skin_thickness": 25,
-    "insulin": 100,
-    "bmi": 28.5,
-    "diabetes_pedigree_function": 0.5,
-    "age": 15
-  }'
-```
+## Pengujian dengan Postman
 
-### Ambil history
-```bash
-curl http://localhost:5000/api/history
-```
+### Setup Collection
+1. Buka Postman → klik **New Collection** → beri nama `DiabeteCheck API`
+2. Tambahkan request berikut satu per satu
 
-### Hapus history
-```bash
-curl -X DELETE http://localhost:5000/api/history
-```
+### Request 1 — Health Check
+| | |
+|---|---|
+| Method | `GET` |
+| URL | `http://localhost:5000/api/health` |
+| Expected | Status `200` |
+
+### Request 2 — Predict (Input Valid)
+| | |
+|---|---|
+| Method | `POST` |
+| URL | `http://localhost:5000/api/predict` |
+| Headers | `Content-Type: application/json` |
+| Body | Raw JSON → 21 field seperti contoh di atas |
+| Expected | Status `200`, ada `prediction` + `probability` + `risk_level` |
+
+### Request 3 — Predict (Input Tidak Valid)
+| | |
+|---|---|
+| Method | `POST` |
+| URL | `http://localhost:5000/api/predict` |
+| Body | `{ "HighBP": 5, "BMI": 999, ...sisanya valid... }` |
+| Expected | Status `400`, ada array `details` berisi field yang salah |
+
+### Request 4 — Predict (Field Tidak Lengkap)
+| | |
+|---|---|
+| Method | `POST` |
+| URL | `http://localhost:5000/api/predict` |
+| Body | `{ "HighBP": 1, "BMI": 28 }` (hanya 2 field) |
+| Expected | Status `400`, semua field yang hilang terdaftar di `details` |
+
+### Request 5 — Get History
+| | |
+|---|---|
+| Method | `GET` |
+| URL | `http://localhost:5000/api/history` |
+| Expected | Status `200`, array riwayat prediksi |
+
+### Request 6 — Delete History
+| | |
+|---|---|
+| Method | `DELETE` |
+| URL | `http://localhost:5000/api/history` |
+| Expected | Status `200`, `"message": "History cleared"` |
+
+> **Tip:** Export collection via **⋯ → Export** untuk dibagikan ke anggota tim.
 
 ---
 
 ## Troubleshooting
 
 | Error | Penyebab | Solusi |
-|---|---|---|
+|-------|----------|--------|
 | `Python tidak ditemukan` | `PYTHON_PATH` salah | Ganti `python3` → `python` di `.env` |
-| `CORS error` di browser | Origin frontend tidak diizinkan | Pastikan `FRONTEND_URL` di `.env` sesuai URL frontend |
-| `Cannot find module` | `npm install` belum dijalankan | Jalankan `npm install` di folder `backend/` |
-| `EADDRINUSE port 5000` | Port sudah dipakai proses lain | Ganti `PORT=5001` di `.env` atau matikan proses lain |
+| `CORS error` di browser | Origin tidak diizinkan | Cek `FRONTEND_URL` di `.env` |
+| `Cannot find module` | Belum `npm install` | Jalankan `npm install` |
+| `EADDRINUSE port 5000` | Port sudah dipakai | Ganti `PORT=5001` di `.env` |
+| `Inference timeout` | Model terlalu berat / Python crash | Cek Python & dependency: `pip install tensorflow numpy joblib` |
 
 ---
 
-## Catatan untuk Tim
+## Catatan Tim
 
-- File `.env` dan `model/*.keras` **tidak di-commit** ke Git (sudah ada di `.gitignore`)
-- History prediksi bersifat **in-memory** — akan hilang saat server restart (ini disengaja untuk MVP)
-- Untuk mengganti ke model asli, lihat bagian **[Meletakkan File Model](#meletakkan-file-model-dari-tim-ai-engineer)** di atas
+- File `.env`, `*.keras`, dan `*.pkl` **tidak di-commit** ke GitHub
+- History bersifat **in-memory** — hilang saat server restart (by design untuk MVP)
+- Konfirmasi urutan `FEATURE_ORDER` di `inference.py` ke **Garrand** sebelum switch ke model asli

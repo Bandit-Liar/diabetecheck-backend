@@ -1,89 +1,90 @@
 """
-inference.py
-Menerima input JSON dari stdin, mengembalikan hasil prediksi ke stdout.
+inference.py — DiabeteCheck v2 (CDC 21 Fitur)
+Dipanggil Node.js via child_process.spawn.
+Menerima JSON dari stdin, mengembalikan JSON ke stdout.
 
-MODE SEKARANG : MOCK — return probability acak antara 0.3–0.8
-MODE PRODUKSI : Ganti bagian bertanda [PRODUCTION] untuk load model .keras asli
+MODE SEKARANG : MOCK — probability acak 0.2–0.85
+MODE PRODUKSI : Ganti pemanggilan mock_predict → production_predict di main()
+                setelah menerima model .keras dan scaler.pkl dari Garrand.
 """
 
 import sys
 import json
 import random
 
-# ─── [PRODUCTION] Import ini diaktifkan saat model .keras sudah tersedia ──────
+# ─── [PRODUCTION] Uncomment saat model dari Garrand sudah tersedia ─────────────
 # import numpy as np
-# import tensorflow as tf
-# import os
+# import joblib
+# from tensorflow import keras
+
+# ─── URUTAN 21 FITUR (HARUS SAMA PERSIS DENGAN SAAT GARRAND MELATIH MODEL) ────
+FEATURE_ORDER = [
+    'HighBP', 'HighChol', 'CholCheck', 'BMI', 'Smoker', 'Stroke',
+    'HeartDiseaseorAttack', 'PhysActivity', 'Fruits', 'Veggies',
+    'HvyAlcoholConsump', 'AnyHealthcare', 'NoDocbcCost', 'GenHlth',
+    'MentHlth', 'PhysHlth', 'DiffWalk', 'Sex', 'Age', 'Education', 'Income'
+]
+
 
 def mock_predict(input_data):
     """
-    MOCK: Simulasi prediksi dengan probability acak 0.3–0.8.
-    Hapus fungsi ini saat model asli sudah siap.
+    MOCK: Simulasi prediksi dengan probability acak 0.2–0.85.
+    Hapus / nonaktifkan fungsi ini saat model asli sudah siap.
     """
-    probability = round(random.uniform(0.3, 0.8), 4)
-    return probability
+    probability = round(random.uniform(0.2, 0.85), 4)
+    return {"probability": probability}
 
 
 def production_predict(input_data):
     """
-    [PRODUCTION] Load model .keras dan jalankan inferensi sungguhan.
-    Aktifkan fungsi ini dan ganti pemanggilan di main() saat model sudah ada.
+    [PRODUCTION] Load model .keras + scaler.pkl lalu jalankan inferensi sungguhan.
 
+    Cara aktifkan:
+      1. Pastikan diabetecheck_model.keras dan scaler.pkl ada di folder model/
+      2. Uncomment import di atas (numpy, joblib, keras)
+      3. Di fungsi main(), ganti mock_predict → production_predict
+      4. Install dependency Python: pip install tensorflow numpy joblib
+
+    PENTING: Konfirmasi urutan FEATURE_ORDER ke Garrand sebelum diaktifkan —
+    urutan harus 100% sama dengan saat model dilatih.
+    """
     import numpy as np
-    import tensorflow as tf
+    import joblib
+    from tensorflow import keras
     import os
 
-    model_path = os.environ.get('MODEL_PATH', './model/diabetecheck_model.keras')
-    model = tf.keras.models.load_model(model_path)
+    model_path = os.environ.get('MODEL_PATH', 'model/diabetecheck_model.keras')
+    scaler_path = os.environ.get('SCALER_PATH', 'model/scaler.pkl')
 
-    features = [
-        input_data['pregnancies'],
-        input_data['glucose'],
-        input_data['blood_pressure'],
-        input_data['skin_thickness'],
-        input_data['insulin'],
-        input_data['bmi'],
-        input_data['diabetes_pedigree_function'],
-        input_data['age'],
-    ]
+    model = keras.models.load_model(model_path)
+    scaler = joblib.load(scaler_path)
 
-    input_array = np.array([features], dtype=np.float32)
-    prediction = model.predict(input_array)
-    probability = float(prediction[0][0])
-    return round(probability, 4)
-    """
-    pass
+    # Susun fitur sesuai urutan training
+    features = [[input_data[f] for f in FEATURE_ORDER]]
+    features_array = np.array(features, dtype=float)
+
+    features_scaled = scaler.transform(features_array)
+    probability = float(model.predict(features_scaled)[0][0])
+
+    return {"probability": round(probability, 4)}
 
 
 def main():
     try:
-        # Baca input JSON dari stdin (dikirim oleh Node.js)
         raw = sys.stdin.read()
         input_data = json.loads(raw)
 
-        # ── Ganti mock_predict → production_predict saat model sudah siap ──
-        probability = mock_predict(input_data)
-
-        result = {
-            "success": True,
-            "probability": probability
-        }
+        # ── Ganti mock_predict → production_predict saat model Garrand siap ──
+        result = mock_predict(input_data)
 
     except json.JSONDecodeError as e:
-        result = {
-            "success": False,
-            "error": f"JSON parsing error: {str(e)}"
-        }
+        result = {"error": f"JSON parsing error: {str(e)}"}
     except Exception as e:
-        result = {
-            "success": False,
-            "error": str(e)
-        }
+        result = {"error": str(e)}
 
-    # Output ke stdout — dibaca oleh Node.js
     print(json.dumps(result))
     sys.stdout.flush()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

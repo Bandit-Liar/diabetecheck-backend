@@ -1,6 +1,7 @@
 /**
  * predictionService.js
  * Memanggil inference.py via child_process dan mengolah hasilnya.
+ * Dataset: CDC Diabetes Health Indicators (21 fitur)
  */
 
 const { spawn } = require('child_process');
@@ -9,87 +10,90 @@ const path = require('path');
 // ─── KONFIGURASI ──────────────────────────────────────────────────────────────
 const PYTHON_PATH = process.env.PYTHON_PATH || 'python3';
 const INFERENCE_SCRIPT = path.resolve(__dirname, '../../model/inference.py');
-
-// ─── THRESHOLD RISIKO ─────────────────────────────────────────────────────────
-const THRESHOLD = {
-  LOW: 0.4,      // < 0.4  → Risiko Rendah
-  MEDIUM: 0.7,   // 0.4–0.7 → Risiko Sedang
-                 // > 0.7  → Risiko Tinggi
-};
+const TIMEOUT_MS = 30000; // 30 detik
 
 /**
- * Menentukan label hasil, warna, dan saran berdasarkan probability.
+ * determineResult()
+ * Menentukan prediction label dan risk_level dari probability.
+ *
+ * prediction : >= 0.50 → "Berisiko"      | < 0.50 → "Tidak Berisiko"
+ * risk_level : >= 0.70 → "Tinggi"        | >= 0.40 → "Sedang" | < 0.40 → "Rendah"
+ *
  * @param {number} probability — nilai 0.0–1.0 dari model
- * @returns {{ level: string, label: string, color: string, suggestion: string }}
+ * @returns {{ prediction: string, risk_level: string }}
  */
 const determineResult = (probability) => {
-  if (probability < THRESHOLD.LOW) {
-    return {
-      level: 'low',
-      label: 'Risiko Rendah',
-      color: 'green',
-      suggestion:
-        'Pertahankan gaya hidup sehat Anda. Tetap aktif berolahraga dan jaga pola makan bergizi.',
-    };
+  const prediction = probability >= 0.5 ? 'Berisiko' : 'Tidak Berisiko';
+
+  let risk_level;
+  if (probability >= 0.70) {
+    risk_level = 'Tinggi';
+  } else if (probability >= 0.40) {
+    risk_level = 'Sedang';
+  } else {
+    risk_level = 'Rendah';
   }
 
-  if (probability < THRESHOLD.MEDIUM) {
-    return {
-      level: 'medium',
-      label: 'Risiko Sedang',
-      color: 'yellow',
-      suggestion:
-        'Disarankan untuk memeriksakan diri ke dokter dan mulai menerapkan pola hidup lebih sehat.',
-    };
-  }
-
-  return {
-    level: 'high',
-    label: 'Risiko Tinggi',
-    color: 'red',
-    suggestion:
-      'Segera konsultasikan kondisi Anda dengan dokter atau tenaga medis untuk pemeriksaan lebih lanjut.',
-  };
+  return { prediction, risk_level };
 };
 
 /**
+ * runInference()
  * Menjalankan inference.py sebagai child process Python.
- * Input dikirim via stdin, output dibaca dari stdout.
- * @param {object} inputData — data yang sudah divalidasi dari req.validatedInput
- * @returns {Promise<object>} hasil prediksi lengkap
+ * Input dikirim via stdin (JSON), output dibaca dari stdout (JSON).
+ *
+ * @param {object} inputData — 21 field dari req.validatedInput
+ * @returns {Promise<{ probability: number }>}
  */
 const runInference = (inputData) => {
   return new Promise((resolve, reject) => {
-    const process = spawn(PYTHON_PATH, [INFERENCE_SCRIPT]);
+    const pythonProcess = spawn(PYTHON_PATH, [INFERENCE_SCRIPT]);
 
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+
+    // Timeout 30 detik — kill process jika terlalu lama
+    const timer = setTimeout(() => {
+      timedOut = true;
+      pythonProcess.kill();
+      reject(new Error('Inference timeout setelah 30 detik. Coba lagi.'));
+    }, TIMEOUT_MS);
 
     // Kumpulkan output dari Python
-    process.stdout.on('data', (chunk) => {
+    pythonProcess.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
     });
 
-    process.stderr.on('data', (chunk) => {
+    pythonProcess.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
 
-    // Kirim input ke Python via stdin
-    process.stdin.write(JSON.stringify(inputData));
-    process.stdin.end();
+    // Kirim input JSON ke Python via stdin
+    pythonProcess.stdin.write(JSON.stringify(inputData));
+    pythonProcess.stdin.end();
 
-    process.on('close', (code) => {
+    pythonProcess.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+
       if (code !== 0) {
         return reject(
-          new Error(`Proses Python keluar dengan kode ${code}. stderr: ${stderr}`)
+          new Error(
+            `Proses Python keluar dengan kode ${code}.${stderr ? ` stderr: ${stderr}` : ''}`
+          )
         );
       }
 
       try {
         const result = JSON.parse(stdout.trim());
 
-        if (!result.success) {
-          return reject(new Error(result.error || 'Inference gagal'));
+        if (result.error) {
+          return reject(new Error(result.error));
+        }
+
+        if (typeof result.probability !== 'number') {
+          return reject(new Error(`Output Python tidak valid: "${stdout}"`));
         }
 
         resolve(result);
@@ -98,12 +102,13 @@ const runInference = (inputData) => {
       }
     });
 
-    process.on('error', (err) => {
+    pythonProcess.on('error', (err) => {
+      clearTimeout(timer);
       if (err.code === 'ENOENT') {
         reject(
           new Error(
             `Python tidak ditemukan di path "${PYTHON_PATH}". ` +
-            `Periksa PYTHON_PATH di file .env (coba "python" atau "python3").`
+            `Periksa PYTHON_PATH di file .env (gunakan "python" atau "python3").`
           )
         );
       } else {
@@ -114,22 +119,21 @@ const runInference = (inputData) => {
 };
 
 /**
+ * predict()
  * Fungsi utama yang dipanggil oleh route handler.
- * @param {object} inputData — data dari req.validatedInput
- * @returns {Promise<object>} hasil prediksi + risk assessment
+ *
+ * @param {object} inputData — 21 field dari req.validatedInput
+ * @returns {Promise<{ prediction, probability, risk_level, input_received }>}
  */
 const predict = async (inputData) => {
-  const inference = await runInference(inputData);
-
-  const { probability } = inference;
-  const riskResult = determineResult(probability);
+  const { probability } = await runInference(inputData);
+  const { prediction, risk_level } = determineResult(probability);
 
   return {
+    prediction,
     probability,
-    percentage: `${(probability * 100).toFixed(1)}%`,
-    ...riskResult,
-    input: inputData,
-    predictedAt: new Date().toISOString(),
+    risk_level,
+    input_received: inputData,
   };
 };
 

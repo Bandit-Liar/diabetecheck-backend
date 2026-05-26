@@ -20,7 +20,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: allowedOrigins,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'DELETE'],
     allowedHeaders: ['Content-Type'],
   })
 );
@@ -33,7 +33,7 @@ app.use(logger);
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.json({
+  res.status(200).json({
     status: 'ok',
     message: 'DiabeteCheck API is running',
     timestamp: new Date().toISOString(),
@@ -52,13 +52,13 @@ app.use((req, res) => {
   });
 });
 
-// ─── GLOBAL ERROR HANDLER ─────────────────────────────────────────────────────
+// ─── GLOBAL ERROR HANDLER (paling bawah) ──────────────────────────────────────
 app.use(errorHandler);
 
 // ─── START SERVER ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('─────────────────────────────────────────');
-  console.log(`  DiabeteCheck Backend berjalan`);
+  console.log(`  DiabeteCheck Backend v2 berjalan`);
   console.log(`  Local  : http://localhost:${PORT}`);
   console.log(`  Health : http://localhost:${PORT}/api/health`);
   console.log(`  Mode   : ${process.env.NODE_ENV || 'development'}`);

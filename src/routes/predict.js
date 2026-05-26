@@ -1,21 +1,18 @@
 /**
  * predict.js
  * Route handler untuk POST /api/predict
- * Menerima 8 field input, validasi, jalankan inferensi, simpan ke history.
+ * Dataset: CDC Diabetes Health Indicators (21 fitur)
  */
 
 const express = require('express');
 const router = express.Router();
 const validateInput = require('../middleware/validateInput');
 const { predict } = require('../services/predictionService');
-
-// In-memory history — diimpor dari history.js agar satu sumber kebenaran
 const { addToHistory } = require('./history');
 
 /**
  * POST /api/predict
- * Body: { pregnancies, glucose, blood_pressure, skin_thickness,
- *         insulin, bmi, diabetes_pedigree_function, age }
+ * Body: 21 field CDC Diabetes Health Indicators (lihat validateInput.js)
  */
 router.post('/', validateInput, async (req, res, next) => {
   try {
@@ -29,7 +26,11 @@ router.post('/', validateInput, async (req, res, next) => {
       success: true,
       data: {
         id: record.id,
-        ...result,
+        prediction: result.prediction,
+        probability: result.probability,
+        risk_level: result.risk_level,
+        input_received: result.input_received,
+        timestamp: record.timestamp,
       },
     });
   } catch (err) {
