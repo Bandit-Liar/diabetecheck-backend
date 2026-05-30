@@ -1,51 +1,92 @@
-# DiabeteCheck — Backend API v2
+# DiabeteCheck — Backend API v3
 
 Backend RESTful API untuk sistem deteksi dini risiko diabetes berbasis AI.
-Dibangun dengan **Node.js + Express.js**, menggunakan dataset **CDC Diabetes Health Indicators (21 fitur)**.
+Dibangun dengan **Node.js + Express.js** sebagai **proxy** ke server FastAPI Garrand
+yang menjalankan model TensorFlow/Keras dengan **17 fitur CDC BRFSS 2015**.
+
+---
+
+## Arsitektur Sistem
+
+```
+Frontend (port 5173)
+    │  POST /api/predict — 17 field langsung di root body
+    ▼
+Express.js Backend (port 5000)   ← kamu di sini
+    │  POST /predict — dibungkus: { features: {...}, use_optimal_threshold: true }
+    │  Header: ngrok-skip-browser-warning: true
+    ▼
+FastAPI Garrand (ngrok URL)
+    │  Model: diabetecheck_model.keras + scaler_final_17fitur.pkl
+    ▼
+Express (konversi format response)
+    │  { success, data: { prediction, probability, risk_level, ... } }
+    ▼
+Frontend (tampilkan hasil)
+```
 
 ---
 
 ## Prasyarat
 
-| Tools  | Versi Minimum | Cek dengan |
-|--------|---------------|------------|
-| Node.js | v18+         | `node -v` |
-| npm    | v8+           | `npm -v`  |
-| Python | v3.8+         | `python --version` atau `python3 --version` |
+| Tools   | Versi Minimum | Cek dengan        |
+|---------|---------------|-------------------|
+| Node.js | v18+          | `node -v`         |
+| npm     | v8+           | `npm -v`          |
+
+> Python tidak diperlukan lagi — model AI dijalankan oleh Garrand di server FastAPI terpisah.
 
 ---
 
 ## Instalasi
 
-### 1. Install dependencies Node.js
+### 1. Install dependencies
 
 ```bash
 cd backend
 npm install
 ```
 
-### 2. Buat file environment
+Pastikan `axios` sudah terinstall (cek di `node_modules/axios`).
+Jika belum, jalankan:
 
 ```bash
-cp .env.example .env
+npm install axios
 ```
 
-Sesuaikan isi `.env`:
+### 2. Buat file `.env`
 
+```bash
+copy .env.example .env
+```
+
+### 3. Isi `AI_API_URL` di `.env`
+
+Minta URL ngrok terbaru dari **Garrand (AI Engineer)**. URL berbentuk:
+```
+https://xxxx-xxxx.ngrok-free.app
+```
+
+Isi di `.env`:
 ```env
 PORT=5000
 NODE_ENV=development
 FRONTEND_URL=http://localhost:5173
-
-# Windows  → PYTHON_PATH=python
-# Mac/Linux → PYTHON_PATH=python3
-PYTHON_PATH=python3
-
-MODEL_PATH=./model/diabetecheck_model.keras
-SCALER_PATH=./model/scaler.pkl
+AI_API_URL=https://xxxx-xxxx.ngrok-free.app
 ```
 
-### 3. Jalankan server
+> ⚠️ **Penting:** URL ngrok **berubah setiap kali** Google Colab Garrand di-restart.
+> Setiap kali Garrand restart Colab, minta URL baru dan update `AI_API_URL` di `.env`.
+
+### 4. Verifikasi FastAPI Garrand aktif
+
+Buka browser dan akses:
+```
+https://xxxx-xxxx.ngrok-free.app/health
+```
+Harus muncul response `{ "status": "ok" }`. Jika tidak muncul, berarti server Garrand belum aktif — hubungi Garrand.
+
+### 5. Jalankan server
 
 ```bash
 # Development (auto-restart)
@@ -58,7 +99,7 @@ npm start
 Output saat berhasil:
 ```
 ─────────────────────────────────────────
-  DiabeteCheck Backend v2 berjalan
+  DiabeteCheck Backend v3 berjalan
   Local  : http://localhost:5000
   Health : http://localhost:5000/api/health
   Mode   : development
@@ -67,69 +108,24 @@ Output saat berhasil:
 
 ---
 
-## Meletakkan File Model dari Garrand (AI Engineer)
-
-Setelah Garrand selesai melatih model, minta dua file berikut:
-
-| File | Deskripsi |
-|------|-----------|
-| `diabetecheck_model.keras` | Model neural network hasil training |
-| `scaler.pkl` | Scaler yang dipakai saat training (wajib sama) |
-
-Letakkan keduanya di folder `model/`:
-
-```
-backend/
-└── model/
-    ├── inference.py                  ← sudah ada
-    ├── diabetecheck_model.keras      ← taruh di sini ✅
-    └── scaler.pkl                    ← taruh di sini ✅
-```
-
-> **Penting:** Kedua file ini tidak akan ter-commit ke GitHub karena sudah
-> ada di `.gitignore`. Bagikan via Google Drive, WeTransfer, atau channel tim.
-
-### Aktifkan model asli
-
-**Langkah 1** — Install dependency Python:
-```bash
-pip install tensorflow numpy joblib
-```
-
-**Langkah 2** — Buka `model/inference.py`, di fungsi `main()` ganti:
-```python
-# SEBELUM (mock)
-result = mock_predict(input_data)
-
-# SESUDAH (model asli)
-result = production_predict(input_data)
-```
-
-**Langkah 3** — Konfirmasi urutan `FEATURE_ORDER` di `inference.py` ke Garrand.
-Urutan 21 fitur **harus persis sama** dengan saat model dilatih.
-
----
-
 ## Struktur Folder
 
 ```
 backend/
 ├── model/
-│   ├── diabetecheck_model.keras   ← dari Garrand (tidak di-commit)
-│   ├── scaler.pkl                 ← dari Garrand (tidak di-commit)
-│   └── inference.py               ← script inferensi Python
+│   └── inference.py          ← tidak dipakai lagi (arsip)
 ├── src/
 │   ├── routes/
-│   │   ├── predict.js             ← POST /api/predict
-│   │   └── history.js             ← GET + DELETE /api/history
+│   │   ├── predict.js        ← POST /api/predict (proxy ke FastAPI)
+│   │   └── history.js        ← GET + DELETE /api/history
 │   ├── middleware/
-│   │   ├── validateInput.js       ← validasi 21 field CDC
-│   │   └── errorHandler.js        ← global error handler
+│   │   ├── validateInput.js  ← validasi 17 field CDC
+│   │   └── errorHandler.js   ← global error handler
 │   ├── services/
-│   │   └── predictionService.js   ← inference + determineResult()
+│   │   └── predictionService.js ← Axios ke FastAPI + konversi response
 │   └── utils/
-│       └── logger.js              ← logger request
-├── .env                           ← tidak di-commit
+│       └── logger.js         ← logger request
+├── .env                      ← tidak di-commit
 ├── .env.example
 ├── .gitignore
 ├── package.json
@@ -141,30 +137,30 @@ backend/
 
 ## API Endpoints
 
-### GET `/api/health`
-Cek status server.
+### `GET /api/health`
+Cek status server Express.
 
 **Response 200:**
 ```json
 {
   "status": "ok",
   "message": "DiabeteCheck API is running",
-  "timestamp": "2026-05-17T10:00:00.000Z"
+  "timestamp": "2026-05-30T10:00:00.000Z"
 }
 ```
 
 ---
 
-### POST `/api/predict`
-Prediksi risiko diabetes berdasarkan 21 fitur CDC.
+### `POST /api/predict`
+Prediksi risiko diabetes — **17 field CDC** langsung di root body.
 
-**Request Body (21 field wajib):**
+**Request Body:**
 ```json
 {
   "HighBP": 1,
-  "HighChol": 0,
+  "HighChol": 1,
   "CholCheck": 1,
-  "BMI": 28,
+  "BMI": 28.5,
   "Smoker": 0,
   "Stroke": 0,
   "HeartDiseaseorAttack": 0,
@@ -172,30 +168,24 @@ Prediksi risiko diabetes berdasarkan 21 fitur CDC.
   "Fruits": 1,
   "Veggies": 1,
   "HvyAlcoholConsump": 0,
-  "AnyHealthcare": 1,
-  "NoDocbcCost": 0,
   "GenHlth": 3,
-  "MentHlth": 5,
-  "PhysHlth": 2,
+  "MentHlth": 0,
+  "PhysHlth": 0,
   "DiffWalk": 0,
-  "Sex": 1,
-  "Age": 7,
-  "Education": 5,
-  "Income": 6
+  "Sex": 0,
+  "Age": 7
 }
 ```
 
-**Validasi 21 field:**
+**Aturan validasi 17 field:**
 
-| Tipe | Field | Nilai Valid |
-|------|-------|-------------|
-| Biner | HighBP, HighChol, CholCheck, Smoker, Stroke, HeartDiseaseorAttack, PhysActivity, Fruits, Veggies, HvyAlcoholConsump, AnyHealthcare, NoDocbcCost, DiffWalk, Sex | 0 atau 1 |
-| Numerik | BMI | 12 – 98 |
-| Numerik | MentHlth, PhysHlth | 0 – 30 |
-| Skala | GenHlth | 1 – 5 |
-| Skala | Age | 1 – 13 |
-| Skala | Education | 1 – 6 |
-| Skala | Income | 1 – 8 |
+| Tipe   | Field                                                                                     | Nilai Valid  |
+|--------|-------------------------------------------------------------------------------------------|--------------|
+| Biner  | HighBP, HighChol, CholCheck, Smoker, Stroke, HeartDiseaseorAttack, PhysActivity, Fruits, Veggies, HvyAlcoholConsump, DiffWalk, Sex | 0 atau 1 |
+| Float  | BMI                                                                                       | 10 – 100     |
+| Skala  | GenHlth                                                                                   | 1 – 5        |
+| Skala  | MentHlth, PhysHlth                                                                        | 0 – 30       |
+| Skala  | Age                                                                                       | 1 – 13       |
 
 **Response sukses 200:**
 ```json
@@ -204,17 +194,13 @@ Prediksi risiko diabetes berdasarkan 21 fitur CDC.
   "data": {
     "id": 1,
     "prediction": "Berisiko",
-    "probability": 0.6781,
-    "risk_level": "Sedang",
-    "input_received": { "...21 field..." },
-    "timestamp": "2026-05-17T10:00:00.000Z"
+    "probability": 0.72,
+    "risk_level": "Risiko Tinggi",
+    "input_received": { "...17 field..." },
+    "timestamp": "2026-05-30T10:00:00.000Z"
   }
 }
 ```
-
-**Logic hasil:**
-- `prediction`: `>= 0.50` → `"Berisiko"` | `< 0.50` → `"Tidak Berisiko"`
-- `risk_level`: `>= 0.70` → `"Tinggi"` | `>= 0.40` → `"Sedang"` | `< 0.40` → `"Rendah"`
 
 **Response error validasi 400:**
 ```json
@@ -222,94 +208,99 @@ Prediksi risiko diabetes berdasarkan 21 fitur CDC.
   "success": false,
   "error": "Validation error",
   "details": [
-    "Field HighBP harus bernilai 0 atau 1 (diterima: 5)",
-    "Field BMI harus berada di antara 12 dan 98 (diterima: 999)"
+    "Field 'HighBP' harus bernilai 0 atau 1 (diterima: 5)",
+    "Field 'BMI' harus berupa angka antara 10 dan 100 (diterima: 999)"
   ]
 }
 ```
 
+**Response error AI service 503:**
+```json
+{
+  "success": false,
+  "error": "AI service tidak dapat diakses. Pastikan server model aktif."
+}
+```
+
 ---
 
-### GET `/api/history`
+### `GET /api/history`
 Ambil semua riwayat prediksi (terbaru di atas).
 
-**Response 200:**
-```json
-{
-  "success": true,
-  "count": 3,
-  "data": [ { "...hasil prediksi..." } ]
-}
-```
-
----
-
-### DELETE `/api/history`
+### `DELETE /api/history`
 Hapus semua riwayat prediksi dari memory.
 
-**Response 200:**
-```json
-{
-  "success": true,
-  "message": "History cleared"
-}
-```
+---
+
+## Pengujian dengan Postman — 4 Skenario Wajib
+
+### Setup
+1. Buka Postman → **New Collection** → beri nama `DiabeteCheck API v3`
+2. Tambahkan request berikut
 
 ---
 
-## Pengujian dengan Postman
+### Skenario 1 — Input Valid (harus return 200)
 
-### Setup Collection
-1. Buka Postman → klik **New Collection** → beri nama `DiabeteCheck API`
-2. Tambahkan request berikut satu per satu
-
-### Request 1 — Health Check
-| | |
-|---|---|
-| Method | `GET` |
-| URL | `http://localhost:5000/api/health` |
-| Expected | Status `200` |
-
-### Request 2 — Predict (Input Valid)
 | | |
 |---|---|
 | Method | `POST` |
 | URL | `http://localhost:5000/api/predict` |
 | Headers | `Content-Type: application/json` |
-| Body | Raw JSON → 21 field seperti contoh di atas |
-| Expected | Status `200`, ada `prediction` + `probability` + `risk_level` |
+| Body (raw JSON) | 17 field lengkap seperti contoh di atas |
 
-### Request 3 — Predict (Input Tidak Valid)
+Expected: **Status 200**, ada `prediction`, `probability`, `risk_level`.
+
+---
+
+### Skenario 2 — Field Binary Salah (harus return 400)
+
 | | |
 |---|---|
 | Method | `POST` |
 | URL | `http://localhost:5000/api/predict` |
-| Body | `{ "HighBP": 5, "BMI": 999, ...sisanya valid... }` |
-| Expected | Status `400`, ada array `details` berisi field yang salah |
+| Body | Sama seperti Skenario 1, tapi ubah `"HighBP": 5` |
 
-### Request 4 — Predict (Field Tidak Lengkap)
+Expected: **Status 400**, `details` berisi pesan error untuk field `HighBP`.
+
+---
+
+### Skenario 3 — Field Range Salah (harus return 400)
+
 | | |
 |---|---|
 | Method | `POST` |
 | URL | `http://localhost:5000/api/predict` |
-| Body | `{ "HighBP": 1, "BMI": 28 }` (hanya 2 field) |
-| Expected | Status `400`, semua field yang hilang terdaftar di `details` |
+| Body | Sama seperti Skenario 1, tapi ubah `"BMI": 999` |
 
-### Request 5 — Get History
+Expected: **Status 400**, `details` berisi pesan error untuk field `BMI`.
+
+---
+
+### Skenario 4 — Field Tidak Lengkap (harus return 400)
+
 | | |
 |---|---|
-| Method | `GET` |
-| URL | `http://localhost:5000/api/history` |
-| Expected | Status `200`, array riwayat prediksi |
+| Method | `POST` |
+| URL | `http://localhost:5000/api/predict` |
+| Body | `{ "HighBP": 1, "HighChol": 0, "BMI": 28, "Age": 7, "Sex": 0 }` |
 
-### Request 6 — Delete History
-| | |
+Expected: **Status 400**, `details` berisi 12 field yang hilang.
+
+---
+
+## Konversi Response FastAPI → Frontend
+
+| FastAPI (`predicted_label`) | Express → Frontend (`prediction`) |
 |---|---|
-| Method | `DELETE` |
-| URL | `http://localhost:5000/api/history` |
-| Expected | Status `200`, `"message": "History cleared"` |
+| `"Diabetik"` | `"Berisiko"` |
+| Selain `"Diabetik"` | `"Tidak Berisiko"` |
 
-> **Tip:** Export collection via **⋯ → Export** untuk dibagikan ke anggota tim.
+| FastAPI (`risk_level`) | Frontend (`risk_level`) |
+|---|---|
+| `"Risiko Tinggi"` | `"Risiko Tinggi"` |
+| `"Risiko Sedang"` | `"Risiko Sedang"` |
+| `"Risiko Rendah"` | `"Risiko Rendah"` |
 
 ---
 
@@ -317,16 +308,17 @@ Hapus semua riwayat prediksi dari memory.
 
 | Error | Penyebab | Solusi |
 |-------|----------|--------|
-| `Python tidak ditemukan` | `PYTHON_PATH` salah | Ganti `python3` → `python` di `.env` |
-| `CORS error` di browser | Origin tidak diizinkan | Cek `FRONTEND_URL` di `.env` |
-| `Cannot find module` | Belum `npm install` | Jalankan `npm install` |
-| `EADDRINUSE port 5000` | Port sudah dipakai | Ganti `PORT=5001` di `.env` |
-| `Inference timeout` | Model terlalu berat / Python crash | Cek Python & dependency: `pip install tensorflow numpy joblib` |
+| `AI_API_URL belum diatur` | `.env` belum diisi | Isi `AI_API_URL` di `.env` dengan URL dari Garrand |
+| `AI service tidak dapat diakses` | FastAPI Garrand tidak aktif / URL salah | Hubungi Garrand, minta Colab dijalankan ulang dan kirim URL baru |
+| `AI service timeout` | Model lambat merespons | Coba lagi, atau hubungi Garrand untuk cek Colab |
+| `EADDRINUSE port 5000` | Port dipakai proses lain | Ganti `PORT=5001` di `.env` |
+| `Cannot find module 'axios'` | Axios belum terinstall | Jalankan `npm install axios` |
 
 ---
 
 ## Catatan Tim
 
-- File `.env`, `*.keras`, dan `*.pkl` **tidak di-commit** ke GitHub
-- History bersifat **in-memory** — hilang saat server restart (by design untuk MVP)
-- Konfirmasi urutan `FEATURE_ORDER` di `inference.py` ke **Garrand** sebelum switch ke model asli
+- File `.env` **tidak di-commit** ke GitHub — bagikan `AI_API_URL` via chat tim
+- **URL ngrok berubah** setiap Colab Garrand restart — selalu update `.env`
+- History prediksi bersifat **in-memory** — hilang saat server Express restart (by design untuk MVP)
+- Untuk cek FastAPI langsung: buka `{AI_API_URL}/docs` di browser → Swagger UI interaktif
