@@ -1,7 +1,7 @@
 /**
- * predict.js
- * Route handler untuk POST /api/predict
- * Dataset: CDC Diabetes Health Indicators (21 fitur)
+ * predict.js — v3
+ * Route handler POST /api/predict
+ * Alur: validateInput → runInference (FastAPI) → determineResult → simpan history → response
  */
 
 const express = require('express');
@@ -12,12 +12,28 @@ const { addToHistory } = require('./history');
 
 /**
  * POST /api/predict
- * Body: 21 field CDC Diabetes Health Indicators (lihat validateInput.js)
+ * Body: 17 field CDC (HighBP, HighChol, ... Age)
+ *
+ * Express otomatis membungkus ke format FastAPI:
+ *   { features: { ...17 field }, use_optimal_threshold: true }
+ * Frontend tidak perlu tahu format internal ini.
  */
 router.post('/', validateInput, async (req, res, next) => {
   try {
     // req.validatedInput sudah bersih & bertipe Number dari validateInput
-    const result = await predict(req.validatedInput);
+    const inputData = req.validatedInput;
+
+    // Panggil FastAPI via predictionService
+    const { prediction, probability, risk_level } = await predict(inputData);
+
+    // Susun result dengan format konsisten untuk frontend
+    const result = {
+      prediction,
+      probability,
+      risk_level,
+      input_received: inputData,
+      timestamp: new Date().toISOString(),
+    };
 
     // Simpan ke history in-memory
     const record = addToHistory(result);
@@ -26,14 +42,24 @@ router.post('/', validateInput, async (req, res, next) => {
       success: true,
       data: {
         id: record.id,
-        prediction: result.prediction,
-        probability: result.probability,
-        risk_level: result.risk_level,
-        input_received: result.input_received,
-        timestamp: record.timestamp,
+        ...result,
       },
     });
+
   } catch (err) {
+    // Bedakan error AI service dari error server biasa
+    const isAiServiceError =
+      err.message?.includes('AI service') ||
+      err.message?.includes('FastAPI') ||
+      err.message?.includes('AI_API_URL');
+
+    if (isAiServiceError) {
+      return res.status(503).json({
+        success: false,
+        error: err.message,
+      });
+    }
+
     next(err);
   }
 });

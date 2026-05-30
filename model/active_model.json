@@ -1,0 +1,7 @@
+{
+  "active_version": "2.0.0",
+  "model_file": "diabetecheck_model.keras",
+  "config_file": "inference_config.json",
+  "last_updated": "2026-05-30T08:35:33.737722Z",
+  "status": "production"
+}

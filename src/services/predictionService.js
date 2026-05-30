@@ -1,140 +1,117 @@
 /**
- * predictionService.js
- * Memanggil inference.py via child_process dan mengolah hasilnya.
- * Dataset: CDC Diabetes Health Indicators (21 fitur)
+ * predictionService.js — v3
+ * Express bertindak sebagai PROXY ke FastAPI Garrand.
+ * Tidak ada lagi child_process / inference.py.
+ * Semua komunikasi ke model AI dilakukan via Axios HTTP request.
  */
 
-const { spawn } = require('child_process');
-const path = require('path');
+const axios = require('axios');
 
 // ─── KONFIGURASI ──────────────────────────────────────────────────────────────
-const PYTHON_PATH = process.env.PYTHON_PATH || 'python3';
-const INFERENCE_SCRIPT = path.resolve(__dirname, '../../model/inference.py');
 const TIMEOUT_MS = 30000; // 30 detik
 
 /**
  * determineResult()
- * Menentukan prediction label dan risk_level dari probability.
+ * Mengkonversi response FastAPI ke format konsisten untuk frontend.
  *
- * prediction : >= 0.50 → "Berisiko"      | < 0.50 → "Tidak Berisiko"
- * risk_level : >= 0.70 → "Tinggi"        | >= 0.40 → "Sedang" | < 0.40 → "Rendah"
+ * Konversi prediction:
+ *   predicted_label "Diabetik"       → prediction "Berisiko"
+ *   predicted_label selain "Diabetik" → prediction "Tidak Berisiko"
  *
- * @param {number} probability — nilai 0.0–1.0 dari model
- * @returns {{ prediction: string, risk_level: string }}
+ * risk_level diteruskan langsung dari FastAPI (sudah Bahasa Indonesia).
+ *
+ * @param {object} inferenceData — response JSON dari FastAPI
+ * @returns {{ prediction: string, probability: number, risk_level: string }}
  */
-const determineResult = (probability) => {
-  const prediction = probability >= 0.5 ? 'Berisiko' : 'Tidak Berisiko';
+const determineResult = (inferenceData) => {
+  const prediction =
+    inferenceData.predicted_label === 'Diabetik' ? 'Berisiko' : 'Tidak Berisiko';
 
-  let risk_level;
-  if (probability >= 0.70) {
-    risk_level = 'Tinggi';
-  } else if (probability >= 0.40) {
-    risk_level = 'Sedang';
-  } else {
-    risk_level = 'Rendah';
-  }
+  const probability = inferenceData.probability_diabetic;
+  const risk_level = inferenceData.risk_level;
 
-  return { prediction, risk_level };
+  return { prediction, probability, risk_level };
 };
 
 /**
  * runInference()
- * Menjalankan inference.py sebagai child process Python.
- * Input dikirim via stdin (JSON), output dibaca dari stdout (JSON).
+ * Mengirim 17 field ke FastAPI Garrand via Axios POST.
  *
- * @param {object} inputData — 21 field dari req.validatedInput
- * @returns {Promise<{ probability: number }>}
+ * Format yang dikirim ke FastAPI (dibungkus otomatis):
+ *   { "features": { ...17 field... }, "use_optimal_threshold": true }
+ *
+ * Header ngrok-skip-browser-warning wajib ada agar ngrok tidak
+ * memblokir request dengan redirect ke halaman peringatan.
+ *
+ * @param {object} inputData — 17 field dari req.body (sudah divalidasi)
+ * @returns {Promise<object>} response JSON dari FastAPI
  */
-const runInference = (inputData) => {
-  return new Promise((resolve, reject) => {
-    const pythonProcess = spawn(PYTHON_PATH, [INFERENCE_SCRIPT]);
+const runInference = async (inputData) => {
+  const aiApiUrl = process.env.AI_API_URL;
 
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
+  if (!aiApiUrl) {
+    throw new Error(
+      'AI_API_URL belum diatur di file .env. ' +
+      'Minta URL ngrok terbaru dari Garrand dan isi di .env.'
+    );
+  }
 
-    // Timeout 30 detik — kill process jika terlalu lama
-    const timer = setTimeout(() => {
-      timedOut = true;
-      pythonProcess.kill();
-      reject(new Error('Inference timeout setelah 30 detik. Coba lagi.'));
-    }, TIMEOUT_MS);
+  const payload = {
+    features: inputData,
+    use_optimal_threshold: true,
+  };
 
-    // Kumpulkan output dari Python
-    pythonProcess.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+  try {
+    const response = await axios.post(`${aiApiUrl}/predict`, payload, {
+      timeout: TIMEOUT_MS,
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
     });
 
-    pythonProcess.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
+    return response.data;
 
-    // Kirim input JSON ke Python via stdin
-    pythonProcess.stdin.write(JSON.stringify(inputData));
-    pythonProcess.stdin.end();
+  } catch (err) {
+    // Koneksi ditolak atau host tidak ditemukan (FastAPI tidak aktif)
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+      throw new Error(
+        'AI service tidak dapat diakses. Pastikan server model aktif.'
+      );
+    }
 
-    pythonProcess.on('close', (code) => {
-      clearTimeout(timer);
-      if (timedOut) return;
+    // Request timeout
+    if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+      throw new Error('AI service timeout. Coba beberapa saat lagi.');
+    }
 
-      if (code !== 0) {
-        return reject(
-          new Error(
-            `Proses Python keluar dengan kode ${code}.${stderr ? ` stderr: ${stderr}` : ''}`
-          )
-        );
-      }
+    // Response error dari FastAPI (4xx / 5xx)
+    if (err.response) {
+      const status = err.response.status;
+      const detail =
+        err.response.data?.detail ||
+        err.response.data?.message ||
+        'Tidak ada detail error';
+      throw new Error(
+        `FastAPI mengembalikan error ${status}: ${detail}`
+      );
+    }
 
-      try {
-        const result = JSON.parse(stdout.trim());
-
-        if (result.error) {
-          return reject(new Error(result.error));
-        }
-
-        if (typeof result.probability !== 'number') {
-          return reject(new Error(`Output Python tidak valid: "${stdout}"`));
-        }
-
-        resolve(result);
-      } catch {
-        reject(new Error(`Gagal parse output Python: "${stdout}"`));
-      }
-    });
-
-    pythonProcess.on('error', (err) => {
-      clearTimeout(timer);
-      if (err.code === 'ENOENT') {
-        reject(
-          new Error(
-            `Python tidak ditemukan di path "${PYTHON_PATH}". ` +
-            `Periksa PYTHON_PATH di file .env (gunakan "python" atau "python3").`
-          )
-        );
-      } else {
-        reject(err);
-      }
-    });
-  });
+    // Error tidak terduga lainnya
+    throw new Error(err.message || 'Terjadi error tidak terduga saat inference');
+  }
 };
 
 /**
  * predict()
  * Fungsi utama yang dipanggil oleh route handler.
  *
- * @param {object} inputData — 21 field dari req.validatedInput
- * @returns {Promise<{ prediction, probability, risk_level, input_received }>}
+ * @param {object} inputData — 17 field dari req.body
+ * @returns {Promise<{ prediction, probability, risk_level }>}
  */
 const predict = async (inputData) => {
-  const { probability } = await runInference(inputData);
-  const { prediction, risk_level } = determineResult(probability);
-
-  return {
-    prediction,
-    probability,
-    risk_level,
-    input_received: inputData,
-  };
+  const inferenceData = await runInference(inputData);
+  return determineResult(inferenceData);
 };
 
-module.exports = { predict, determineResult };
+module.exports = { predict, runInference, determineResult };
